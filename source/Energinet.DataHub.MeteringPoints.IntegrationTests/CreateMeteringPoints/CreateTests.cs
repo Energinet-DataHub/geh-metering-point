@@ -13,14 +13,27 @@
 // limitations under the License.
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Energinet.DataHub.Core.App.Common;
+using Energinet.DataHub.Core.App.Common.Abstractions.Actor;
+using Energinet.DataHub.Core.App.Common.Abstractions.Users;
 using Energinet.DataHub.MeteringPoints.Application.Create;
+using Energinet.DataHub.MeteringPoints.Client.Abstractions.Models;
 using Energinet.DataHub.MeteringPoints.Domain.MasterDataHandling.Components;
 using Energinet.DataHub.MeteringPoints.Domain.MasterDataHandling.Components.MeteringDetails;
 using Energinet.DataHub.MeteringPoints.Domain.MeteringPoints;
+using Energinet.DataHub.MeteringPoints.EntryPoints.Processing;
+using Energinet.DataHub.MeteringPoints.EntryPoints.WebApi.MeteringPoints.Queries;
+using Energinet.DataHub.MeteringPoints.Infrastructure.Correlation;
 using Energinet.DataHub.MeteringPoints.Infrastructure.EDI;
 using Energinet.DataHub.MeteringPoints.IntegrationTests.Tooling;
+using MediatR;
+using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.Extensibility;
+using SimpleInjector;
 using Xunit;
 using Xunit.Categories;
 
@@ -28,7 +41,7 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
 {
     [IntegrationTest]
     public class CreateTests
-        : TestHost
+        : EntryPointBasedFixture<Program>
     {
         public CreateTests(DatabaseFixture databaseFixture)
             : base(databaseFixture) { }
@@ -38,9 +51,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
         {
             var request = CreateCommand();
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            await AssertProcessOverviewAsync(
+            await Assert.ProcessOverviewAsync(
                     SampleData.GsrnNumber,
                     "BRS-004",
                     "RequestCreateMeteringPoint",
@@ -59,9 +72,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeterNumber = string.Empty,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D37");
+            Assert.ValidationError("D37");
         }
 
         [Fact]
@@ -69,19 +82,20 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
         {
             var request = CreateCommand() with { MeteringGridArea = "foo" };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E10", DocumentType.RejectCreateMeteringPoint);
+            Assert.ValidationError("E10", DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
         public async Task CreateMeteringPoint_WithAlreadyExistingGsrnNumber_ShouldGenerateRejectMessageInOutbox()
         {
             var request = CreateCommand();
-            await SendCommandAsync(request, CancellationToken.None).ConfigureAwait(false);
-            await SendCommandAsync(request, CancellationToken.None).ConfigureAwait(false);
 
-            AssertOutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.RejectCreateMeteringPoint);
+            await Act.SendCommandAsync(request, CancellationToken.None).ConfigureAwait(false);
+            await Act.SendCommandAsync(request, CancellationToken.None).ConfigureAwait(false);
+
+            Assert.OutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
@@ -97,9 +111,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeteringMethod = MeteringMethod.Physical.Name,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D31", DocumentType.RejectCreateMeteringPoint);
+            Assert.ValidationError("D31", DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
@@ -111,8 +125,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     ScheduledMeterReadingDate = "01",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
-            AssertValidationError("E86", DocumentType.RejectCreateMeteringPoint);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
+
+            Assert.ValidationError("E86", DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
@@ -125,9 +140,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeteringMethod = MeteringMethod.Virtual.Name,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E86", DocumentType.RejectCreateMeteringPoint);
+            Assert.ValidationError("E86", DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
@@ -156,9 +171,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeterNumber = null,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D56", DocumentType.RejectCreateMeteringPoint);
+            Assert.ValidationError("D56", DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
@@ -172,9 +187,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     ScheduledMeterReadingDate = string.Empty,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D02", DocumentType.RejectCreateMeteringPoint);
+            Assert.ValidationError("D02", DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
@@ -186,9 +201,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeteringMethod = string.Empty,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D02", DocumentType.RejectCreateMeteringPoint);
+            Assert.ValidationError("D02", DocumentType.RejectCreateMeteringPoint);
         }
 
         [Fact]
@@ -200,9 +215,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeteringMethod = "Invalid_value",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D02");
+            Assert.ValidationError("D02");
         }
 
         [Fact]
@@ -215,9 +230,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     ConnectionType = invalidConnectionType,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D02");
+            Assert.ValidationError("D02");
         }
 
         [Fact]
@@ -231,9 +246,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     PhysicalConnectionCapacity = "1",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D65");
+            Assert.ValidationError("D65");
         }
 
         [Fact]
@@ -245,9 +260,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     SettlementMethod = "Invalid_Method_Name",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D15");
+            Assert.ValidationError("D15");
         }
 
         [Fact]
@@ -259,9 +274,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     ProductType = "Invalid_Method_Name",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E29");
+            Assert.ValidationError("E29");
         }
 
         [Fact]
@@ -273,9 +288,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     ProductType = ProductType.Tariff.Name,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E29");
+            Assert.ValidationError("E29");
         }
 
         [Fact]
@@ -290,9 +305,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeterNumber = null,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E86");
+            Assert.ValidationError("E86");
         }
 
         [Fact]
@@ -305,9 +320,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     LocationDescription = invalidLocationDescription,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E86");
+            Assert.ValidationError("E86");
         }
 
         [Fact]
@@ -319,9 +334,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     AssetType = "invalid_value",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D59");
+            Assert.ValidationError("D59");
         }
 
         [Theory]
@@ -353,9 +368,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     CountryCode = invalidCountryCode,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E86");
+            Assert.ValidationError("E86");
         }
 
         [Fact]
@@ -382,9 +397,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     EffectiveDate = string.Empty,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D02");
+            Assert.ValidationError("D02");
         }
 
         [Fact]
@@ -396,9 +411,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     TypeOfMeteringPoint = string.Empty,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D02");
+            Assert.ValidationError("D02");
         }
 
         [Fact]
@@ -410,9 +425,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     TypeOfMeteringPoint = "invalid value",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D18");
+            Assert.ValidationError("D18");
         }
 
         [Fact]
@@ -425,9 +440,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MaximumPower = invalidPowerLimit,
                 };
 
-            await SendCommandAsync(document).ConfigureAwait(false);
+            await Act.SendCommandAsync(document).ConfigureAwait(false);
 
-            AssertValidationError("E86");
+            Assert.ValidationError("E86");
         }
 
         [Fact]
@@ -439,9 +454,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MaximumPower = null,
                 };
 
-            await SendCommandAsync(document).ConfigureAwait(false);
+            await Act.SendCommandAsync(document).ConfigureAwait(false);
 
-            AssertOutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.ConfirmCreateMeteringPoint);
+            Assert.OutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.ConfirmCreateMeteringPoint);
         }
 
         [Fact]
@@ -467,9 +482,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MaximumCurrent = null,
                 };
 
-            await SendCommandAsync(document).ConfigureAwait(false);
+            await Act.SendCommandAsync(document).ConfigureAwait(false);
 
-            AssertOutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.ConfirmCreateMeteringPoint);
+            Assert.OutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.ConfirmCreateMeteringPoint);
         }
 
         [Fact]
@@ -482,9 +497,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MaximumPower = null,
                 };
 
-            await SendCommandAsync(document).ConfigureAwait(false);
+            await Act.SendCommandAsync(document).ConfigureAwait(false);
 
-            AssertOutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.ConfirmCreateMeteringPoint);
+            Assert.OutboxMessage<MessageHubEnvelope>(envelope => envelope.MessageType == DocumentType.ConfirmCreateMeteringPoint);
         }
 
         [Theory]
@@ -498,9 +513,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeasureUnitType = measurementUnitType,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E73");
+            Assert.ValidationError("E73");
         }
 
         [Fact]
@@ -512,9 +527,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     UnitType = MeasurementUnitType.Ampere.Name,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E73");
+            Assert.ValidationError("E73");
         }
 
         [Fact]
@@ -527,9 +542,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     GeoInfoReference = invalidGeoInfoReference,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E86");
+            Assert.ValidationError("E86");
         }
 
         [Fact]
@@ -541,9 +556,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MeterReadingOccurrence = "Not_valid_Reading_occurence_value",
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D53");
+            Assert.ValidationError("D53");
         }
 
         [Fact]
@@ -556,9 +571,9 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     IsActualAddress = null,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("D63");
+            Assert.ValidationError("D63");
         }
 
         [Fact]
@@ -571,19 +586,41 @@ namespace Energinet.DataHub.MeteringPoints.IntegrationTests.CreateMeteringPoints
                     MaximumCurrent = invalidCurrent,
                 };
 
-            await SendCommandAsync(request).ConfigureAwait(false);
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
 
-            AssertValidationError("E86");
+            Assert.ValidationError("E86");
         }
 
         [Fact]
         public async Task Should_reject_when_current_actor_is_not_grid_operator_for_applied_grid_area()
         {
             SetCurrentAuthenticatedActor(new Guid("08e2ba01-0ead-48c0-bdc7-8e2c7f7c5525"));
+
             var request = Scenarios.CreateDocument();
 
-            await SendCommandAsync(request).ConfigureAwait(false);
-            AssertValidationError("E0I");
+            await Act.SendCommandAsync(request).ConfigureAwait(false);
+            Assert.ValidationError("E0I");
+        }
+
+        protected override void AddEnvironmentVariables([NotNull] Dictionary<string, string> variables)
+        {
+            variables.Add("METERINGPOINT_DB_CONNECTION_STRING", DatabaseConnectionString);
+        }
+
+        protected override void OverrideRegistrations([NotNull] Container container)
+        {
+            // Fake current actor and user
+            container.Register<IActorContext>(() => new ActorContext { CurrentActor = new Actor(SampleData.GridOperatorIdOfGrid870, "GLN", "8200000001409", "GridAccessProvider") }, Lifestyle.Singleton);
+            container.Register<IUserContext>(() => new UserContext { CurrentUser = new User(Guid.NewGuid(), new List<Guid> { Guid.NewGuid() }) }, Lifestyle.Singleton);
+
+            // Singleton for tests
+            container.Register<ICorrelationContext, CorrelationContext>(Lifestyle.Singleton);
+
+            // Specific for test instead of using Application Insights package
+            container.Register(() => new TelemetryClient(new TelemetryConfiguration()), Lifestyle.Scoped);
+
+            // Only for asserting process overview creation
+            container.Register<IRequestHandler<MeteringPointProcessesByGsrnQuery, List<Process>>, MeteringPointProcessesByGsrnQueryHandler>();
         }
 
         [Fact]
